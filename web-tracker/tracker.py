@@ -422,13 +422,17 @@ def run_all():
             LCZero(),
     ]:
         print(tracker.url)
-        tracker.run()
+        try:
+            tracker.run()
+        except:
+            import traceback
+            traceback.print_exc()
 
 def email(subject, body):
     #TODO: proper unix escaping
     subject = subject.replace("'","'\\''")
     body = body.replace("'", "'\\''")
-    jtutils.run("/home/jtrigg/misc_code/python_scripts/mailer -t jasontrigg0@gmail.com -s '{subject}' -b '{body}'".format(**vars()))
+    jtutils.run("/home/jtrigg/scripts/mailer -t jasontrigg0@gmail.com -s '{subject}' -b '{body}'".format(**vars()))
 
 if __name__ == "__main__":
     run_all()
