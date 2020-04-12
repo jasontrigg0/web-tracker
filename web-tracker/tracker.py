@@ -7,17 +7,32 @@ import os
 import io
 import scrape
 import pawk
+import json
 
 class WebTracker(object):
     def __init__(self,title):
         self.title
     def run(self):
-        self.fetch_val = self.fetch()
-        trigger_val = self.compute_trigger()
+        #trigger_val: boolean
+        #notify_args: dict
+        #new_state: string
+        trigger_val, notify_args, new_state = self.update()
         if trigger_val not in [True, False, 0, 1]: raise #trigger should be a boolean, check compute_trigger() function
         if trigger_val:
-            self.notify()
-        self.log(self.fetch_val, trigger_val)
+            self.notify(**notify_args)
+        self.log(new_state, trigger_val)
+    def update(self):
+        #update defines the function to take the prior state
+        #(by default self.get_last_trigger())
+        #and the new information
+        #(self.fetch())
+        #and decide whether to trigger
+        #and what the new_state is
+
+        #TODO: can I remove references to self.fetch_val?
+        #could those be handled by a different update function
+        self.fetch_val = self.fetch()
+        return (self.compute_trigger(), {"fetch_val": self.fetch_val}, self.fetch_val)
     def log(self, contents, trigger_val):
         self.make_log_dir()
         YYYYMMDD = datetime.datetime.now().strftime("%Y%m%d")
@@ -68,8 +83,8 @@ class WebTracker(object):
         else:
             with open(logs[0]) as f_in:
                 return f_in.read()
-    def notify(self):
-        email("Trigger value {self.fetch_val} occurred for tracker {self.title}! [eom]".format(**vars()),"")
+    def notify(self, **args):
+        email("Trigger value {args.fetch_val} occurred for tracker {self.title}! [eom]".format(**vars()),"")
     def cmd2df(self, cmd):
         out, _, _ = jtutils.run(cmd)
         df = pcsv.any2csv.csv2df(out)
@@ -116,7 +131,7 @@ class CCRL(WebTracker):
         return top_rating
     def compute_trigger(self):
         return self.trigger_increase()
-    def notify(self):
+    def notify(self, **args):
         email("CCRL high rating!", "New top rating: {self.fetch_val}. {self.url}".format(**vars()))
 
 class BBR(WebTracker):
@@ -137,8 +152,9 @@ class BBR(WebTracker):
         return threes
     def compute_trigger(self):
         return self.trigger_increase()
-    def notify(self):
-        email("BBR record 3PA!", "New record: {self.fetch_val}. {self.url}".format(**vars()))
+    def notify(self, **args):
+        fetch_val = args["fetch_val"]
+        email("BBR record 3PA!", 'New record: {fetch_val}. {self.url}'.format(**vars()))
 
 class CGS(WebTracker):
     def __init__(self):
@@ -154,7 +170,7 @@ class CGS(WebTracker):
         return max_rating
     def compute_trigger(self):
         return self.trigger_increase()
-    def notify(self):
+    def notify(self, **args):
         email("CGS record go elo!", "New record: {self.fetch_val}. {self.url}".format(**vars()))
 
 class PFR(WebTracker):
@@ -175,28 +191,24 @@ class PFR(WebTracker):
         return max_rating
     def compute_trigger(self):
         return self.trigger_increase()
-    def notify(self):
+    def notify(self, **args):
         email("New record NFL passer rating!", "New record: {self.fetch_val}. {self.url}".format(**vars()))
 
 class Cryptos(WebTracker):
     def __init__(self):
         super(Cryptos,self)
         self.title = "cryptos"
-        self.url = "https://coinmarketcap.com/"
+        self.url = 'https://s2.coinmarketcap.com/generated/stats/global.json'
     def fetch(self):
-        scrape_output = scrape.scrape({"url":self.url,
-                                       "css":'div#total_market_cap',
-                                       "text":True})
-        marketcap = pawk.pawk({
-            "input":scrape_output,
-            "process_code":['l = l.replace(",",""); l = re.findall("[0-9]+",l); if l: print(l[0]); ']
-        })
+        marketcap = json.loads(jtutils.url_to_soup(self.url).body.p.text)["total_market_cap_by_available_supply_usd"]
+        marketcap = str(round(marketcap))
+
         if not marketcap:
-            raise Exception("Couldn't find marketcap!\n" + cmd)
+            raise Exception("Couldn't find marketcap!\n")
         return marketcap
     def compute_trigger(self):
         return self.trigger_pct_change(10)
-    def notify(self):
+    def notify(self, **args):
         last_trigger = self.get_last_trigger()
         email("Crypto marketcap moving!", "New marketcap: {self.fetch_val}. Old marketcap: {last_trigger}. {self.url}".format(**vars()))
 
@@ -215,7 +227,7 @@ class Trump2018(WebTracker):
         return pct
     def compute_trigger(self):
         return self.trigger_abs_change(3) #trigger whenever the percent changes by 3%
-    def notify(self):
+    def notify(self, **args):
         last_trigger = self.get_last_trigger()
         email("Movement in Donald Trump 2018 market!", "New value: {self.fetch_val}. Last value: {last_trigger}. {self.url}".format(**vars()))
 
@@ -233,8 +245,8 @@ class GoogleNapoleon(WebTracker):
         })
         return out.strip()
     def compute_trigger(self):
-        return self.fetch_val != "Napoleon"
-    def notify(self):
+        return self.fetch_val not in ["Napoleon","Napoleon Bonaparte"]
+    def notify(self, **args):
         email("Google knows Napoleon didn't win the Battle of Waterloo!", "It says {self.fetch_val} won.".format(**vars()))
 
 
@@ -282,7 +294,7 @@ class IMDBMovie(IMDBTop):
         super(IMDBMovie,self)
         self.title = "imdbmovie"
         self.url = "http://www.imdb.com/chart/top"
-    def notify(self):
+    def notify(self, **args):
         new_titles = self.imdb_diff(self.fetch_val)
         email("New movie on IMDB top 250!", "{new_titles}".format(**vars())) #TODO tell the email which movie it is!
 
@@ -291,7 +303,7 @@ class IMDBTv(IMDBTop):
         super(IMDBTv,self)
         self.title = "imdbtv"
         self.url = "http://www.imdb.com/chart/toptv/"
-    def notify(self):
+    def notify(self, **args):
         new_titles = self.imdb_diff(self.fetch_val)
         email("New tv show on IMDB top 250!", "{new_titles}".format(**vars())) #TODO tell the email which show it is!
 
@@ -312,7 +324,7 @@ class YC(WebTracker):
         last_trigger = self.get_last_trigger()
         old_vals = last_trigger.split("\n") if last_trigger else []
         return (new_vals, old_vals)
-    def notify(self):
+    def notify(self, **args):
         new_vals, old_vals = self.diff()
         email("Change in top YC companies!","Added companies: {new_vals}. Removed companies: {old_vals}".format(**vars()))
 
@@ -322,16 +334,26 @@ class ArenaOfValor(WebTracker):
         self.title="ArenaOfValor"
         self.url="http://reddit.com/r/arenaofvalor"
     def fetch(self):
-        out = scrape.scrape({
-            "url":self.url,
-            "css":"span.subscribers span.number",
-            "text":True
-        })
-        out = out.split("\n")[0].replace(",","")
+        try:
+            #"old reddit"
+            out = scrape.scrape({
+                "url":self.url,
+                "css":"span.subscribers span.number",
+                "text":True
+            })
+            out = out.split("\n")[0].replace(",","")
+            return out
+        except:
+            pass
+
+        #"new reddit"
+        soup = jtutils.url_to_soup(self.url,True)
+        subs = (soup.find_all(text="Subscribers")[0].parent.parent.find_all('p')[0].text)
+        out = (str(int(float(subs.replace('k','')) * 1000)))
         return out
     def compute_trigger(self):
         return self.trigger_pct_change(50)
-    def notify(self):
+    def notify(self, **args):
         email("ArenaOfValor subreddit growing!","{self.fetch_val} users.".format(**vars()))
 
 class SteamCharts(WebTracker):
@@ -349,7 +371,7 @@ class SteamCharts(WebTracker):
         return out
     def compute_trigger(self):
         return self.trigger_increase()
-    def notify(self):
+    def notify(self, **args):
         email("New peak users on steamcharts!","{self.fetch_val} peak concurrent players.".format(**vars()))
 
 class LeelaZero(WebTracker):
@@ -366,7 +388,7 @@ class LeelaZero(WebTracker):
         })
         df = pcsv.any2csv.csv2df(out)
         return df.values[1][1]
-    def notify(self):
+    def notify(self, **args):
         email("New LeelaZero network!","See: {self.url}".format(**vars()))
 
 class LCZero(WebTracker):
@@ -384,14 +406,14 @@ class LCZero(WebTracker):
         return str(df.values[0][2])
     def compute_trigger(self):
         return self.trigger_increase()
-    def notify(self):
+    def notify(self, **args):
         email("New best LCZero network!","See: {self.url}".format(**vars()))
 
 class TrackAndField(WebTracker):
     def __init__(self):
         super(TrackAndField, self)
         self.title="TrackAndField"
-        self.url=["https://www.trackandfieldnews.com/index.php/category-records/274-mens-outdoor-world-records","https://www.trackandfieldnews.com/index.php/category-records/278-womens-outdoor-world-records"]
+        self.url=["https://trackandfieldnews.com/records/mens-world-records/","https://trackandfieldnews.com/records/womens-world-records/"]
     def fetch(self):
         mens = scrape.scrape({"url":self.url[0],
                              "table":True,
@@ -400,8 +422,61 @@ class TrackAndField(WebTracker):
                                 "table":True,
                                 "index":1})
         return mens + "\n" + womens
-    def notify(self):
+    def notify(self, **args):
         email("New track and field world record","See: {self.url}".format(**vars()))
+
+class Twitch(WebTracker):
+    #TODO: figure out trigger
+    def __init__(self):
+        super(Twitch, self)
+        self.title='Twitch'
+        self.url= "https://sullygnome.com/games/30/watched"
+    def fetch(self):
+        table = scrape.scrape({"url": self.url,
+                           "table":True,
+                           "js":True
+        })
+        out = pawk.pawk({
+            "input":table,
+            "grep_code":'i<=5',
+            "process_code":['r[3] = r[3].replace("hours","").replace(",",""); write_line(r[2:4])']
+        })
+        #@example
+        #out =
+        #Game,Watch time
+        #Fortnite,126481107
+        #League of Legends,71854484
+        #IRL,43996483
+        #Dota 2,42668300
+        #PLAYERUNKNOWN'S BATTLEGROUNDS,36111039
+        return out
+    def update(self):
+        import pandas as pd
+        if self.get_last_trigger():
+            df_state = pcsv.any2csv.csv2df(self.get_last_trigger())
+            dict_state = dict(df_state.values)
+        else:
+            dict_state = {}
+
+        fetch_val = self.fetch()
+        df_new = pcsv.any2csv.csv2df(fetch_val)
+        dict_new = dict(df_new.values)
+
+        trigger = False
+        new_highs = {}
+        for game in dict_new:
+            if int(dict_new[game]) > int(dict_state.get(game,0)):
+                trigger = True #a game hit a new high!
+                dict_state[game] = dict_new[game]
+                new_highs[game] = dict_new[game]
+
+        out = pcsv.any2csv.rows2csv([["game","hours"]] + list(dict_state.items()))
+        notify = pcsv.any2csv.rows2csv([["game","hours"]] + list(new_highs.items()))
+        return (trigger, {"body": notify}, out)
+    def notify(self, **args):
+        email("New peak twitch viewing hours!", args["body"])
+
+
 
 def run_all():
     for tracker in [
@@ -413,20 +488,24 @@ def run_all():
             Trump2018(),
             IMDBMovie(),
             IMDBTv(),
-            # GoogleNapoleon(),
+            GoogleNapoleon(),
             YC(),
             ArenaOfValor(),
             SteamCharts(),
             LeelaZero(),
             TrackAndField(),
             LCZero(),
+            Twitch()
     ]:
-        print(tracker.url)
-        try:
-            tracker.run()
-        except:
-            import traceback
-            traceback.print_exc()
+        run_tracker(tracker)
+
+def run_tracker(tracker):
+    print(tracker.url)
+    try:
+        tracker.run()
+    except:
+        import traceback
+        traceback.print_exc()
 
 def email(subject, body):
     #TODO: proper unix escaping
